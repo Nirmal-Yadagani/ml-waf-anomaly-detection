@@ -1,0 +1,21 @@
+rate_limit:
+  triggers:
+    - "Request rate"
+    - "Traffic burst"
+  action:
+    type: rate_limit
+    limit: 10/min
+
+block_ip:
+  triggers:
+    - "Rare endpoint"
+    - "High-entropy payload"
+  action:
+    type: block_ip
+
+protect_endpoint:
+  triggers:
+    - "Multiple endpoints accessed"
+    - "Non-human timing pattern"
+  action:
+    type: endpoint_protection
