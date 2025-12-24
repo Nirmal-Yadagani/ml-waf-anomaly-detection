@@ -1,3 +1,6 @@
+import pickle
+from pathlib import Path
+
 from ingestion.log_reader import NginxLogReader
 from feature_engineering.extractor import FeatureExtractor
 from baseline.baseline_trainer import BaselineTrainer
@@ -7,13 +10,17 @@ from explainability.feature_diff import FeatureDiff
 from explainability.explanation_builder import ExplanationBuilder
 from rule_engine.rule_generator import RuleGenerator
 from rule_engine.rule_validator import RuleValidator
+from baseline.baseline_store import BaselineStore
+from training.retraining_hooks import RetrainingHooks
 
 # --------------------------------------------------
 # 1. Read traffic logs
 # --------------------------------------------------
 
-log_path = "/var/log/nginx/ml_access.log"
+log_path = "/home/nirmal-yadagani/synthetic_logs/ml_access.log"
 events = list(NginxLogReader(log_path).read())
+
+
 
 print(f"[INFO] Loaded {len(events)} traffic events")
 
@@ -37,12 +44,52 @@ print("[INFO] Feature extraction complete")
 # 3. Baseline learning
 # --------------------------------------------------
 
-baseline_trainer = BaselineTrainer()
-baseline_trainer.fit(ml_features)
+# -------------------------
+# Adaptive baseline
+# -------------------------
 
+baseline_store = BaselineStore()
+baseline_trainer = BaselineTrainer()
+
+existing_baseline = baseline_store.load()
+if existing_baseline:
+    baseline_trainer.baseline = existing_baseline
+    print("[INFO] Loaded existing baseline")
+else:
+    print("[INFO] No existing baseline found")
+
+# Initial scoring (before update)
+baseline_scores = baseline_trainer.score_deviation(ml_features) \
+    if baseline_trainer.baseline else ml_features.iloc[:, 0] * 0
+
+# -------------------------
+# Retraining decision
+# -------------------------
+
+hooks = RetrainingHooks()
+avg_baseline_score = baseline_scores.mean()
+
+should_update = hooks.should_retrain(
+    fp_rate=0.0,   # hook for admin feedback later
+    avg_baseline_score=avg_baseline_score,
+)
+
+if should_update:
+    if baseline_trainer.baseline:
+        baseline_trainer.update(ml_features, alpha=0.1)
+        print("[INFO] Baseline updated adaptively")
+    else:
+        baseline_trainer.fit(ml_features)
+        print("[INFO] Baseline trained (cold start)")
+
+    baseline_store.save(baseline_trainer.get_baseline())
+    hooks.mark_retrained()
+else:
+    print("[INFO] Baseline remains unchanged")
+
+baseline = baseline_trainer.get_baseline()
 baseline_scores = baseline_trainer.score_deviation(ml_features)
 
-print("[INFO] Baseline learned")
 
 # --------------------------------------------------
 # 4. Isolation Forest
@@ -125,8 +172,6 @@ for rule in rules:
     print(rule)
 
 
-import pickle
-from pathlib import Path
 
 Path("dashboard/data").mkdir(parents=True, exist_ok=True)
 
